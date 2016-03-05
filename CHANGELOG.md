@@ -1,3 +1,8 @@
+# v0.12.0
+
+- Requires Elixir 1.2+
+- Internal changes in the TTL implementation.
+
 # v0.11.0
 
 ## Improvements
