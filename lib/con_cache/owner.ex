@@ -34,7 +34,7 @@ defmodule ConCache.Owner do
 
     state = init_ttl_check(options)
     if Map.get(state, :ttl_check) != nil do
-      cache = %ConCache{cache | ttl_manager: self}
+      cache = %ConCache{cache | ttl_check: true}
     end
 
     state = %__MODULE__{state | monitor_ref: Process.monitor(Process.whereis(:con_cache_registry))}

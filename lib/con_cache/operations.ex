@@ -116,15 +116,13 @@ defmodule ConCache.Operations do
   end
 
   defp set_ttl(_, _, :no_update), do: :ok
-  defp set_ttl(%ConCache{ttl_manager: nil}, _, _), do: :ok
-  defp set_ttl(%ConCache{ttl_manager: ttl_manager}, key, ttl) do
-    ConCache.Owner.set_ttl(ttl_manager, key, ttl)
-  end
+  defp set_ttl(%ConCache{owner_pid: owner_pid, ttl_check: true}, key, ttl),
+    do: ConCache.Owner.set_ttl(owner_pid, key, ttl)
+  defp set_ttl(_, _, _), do: :ok
 
-  defp clear_ttl(%ConCache{ttl_manager: nil}, _), do: :ok
-  defp clear_ttl(%ConCache{ttl_manager: ttl_manager}, key) do
-    ConCache.Owner.clear_ttl(ttl_manager, key)
-  end
+  defp clear_ttl(%ConCache{owner_pid: owner_pid, ttl_check: true}, key),
+    do: ConCache.Owner.clear_ttl(owner_pid, key)
+  defp clear_ttl(_, _), do: :ok
 
 
   defp invoke_callback(%ConCache{callback: nil}, _), do: :ok
