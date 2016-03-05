@@ -11,37 +11,41 @@ defmodule LockTest do
 
   test "timeout" do
     {:ok, lock} = ConCache.Lock.start_link
-    spawn(fn() -> ConCache.Lock.exec(lock, :a, fn() -> :timer.sleep(100) end) end)
+    key = make_ref
+    spawn(fn() -> ConCache.Lock.exec(lock, key, fn() -> :timer.sleep(100) end) end)
     :timer.sleep(10)
-    assert {:timeout, _} = catch_exit(ConCache.Lock.exec(lock, :a, 1, fn() -> :ok end))
+    assert {:timeout, _} = catch_exit(ConCache.Lock.exec(lock, key, 1, fn() -> :ok end))
   end
 
   test "monitor" do
     {:ok, lock} = ConCache.Lock.start_link
-    pid = spawn(fn() -> ConCache.Lock.exec(lock, :a, fn() -> :timer.sleep(:infinity) end) end)
+    key = make_ref
+    pid = spawn(fn() -> ConCache.Lock.exec(lock, key, fn() -> :timer.sleep(:infinity) end) end)
     :timer.sleep(10)
     Process.exit(pid, :kill)
-    assert ConCache.Lock.exec(lock, :a, fn() -> :ok end) == :ok
+    assert ConCache.Lock.exec(lock, key, fn() -> :ok end) == :ok
   end
 
   test "monitor 2" do
     {:ok, lock} = ConCache.Lock.start_link
-    pid1 = spawn(fn() -> ConCache.Lock.exec(lock, :a, fn() -> :timer.sleep(:infinity) end) end)
-    pid2 = spawn(fn() -> ConCache.Lock.exec(lock, :a, fn() -> :timer.sleep(:infinity) end) end)
+    key = make_ref
+    pid1 = spawn(fn() -> ConCache.Lock.exec(lock, key, fn() -> :timer.sleep(:infinity) end) end)
+    pid2 = spawn(fn() -> ConCache.Lock.exec(lock, key, fn() -> :timer.sleep(:infinity) end) end)
     :timer.sleep(10)
     Process.exit(pid2, :kill)
     Process.exit(pid1, :kill)
-    assert ConCache.Lock.exec(lock, :a, fn() -> :ok end) == :ok
+    assert ConCache.Lock.exec(lock, key, fn() -> :ok end) == :ok
   end
 
   test "try" do
     {:ok, lock} = ConCache.Lock.start_link
-    assert ConCache.Lock.try_exec(lock, :a, fn() -> 1 end) == 1
-    spawn(fn() -> ConCache.Lock.try_exec(lock, :a, fn() -> :timer.sleep(100) end) end)
+    key = make_ref
+    assert ConCache.Lock.try_exec(lock, key, fn() -> 1 end) == 1
+    spawn(fn() -> ConCache.Lock.try_exec(lock, key, fn() -> :timer.sleep(100) end) end)
     :timer.sleep(20)
-    assert ConCache.Lock.try_exec(lock, :a, fn() -> 2 end) == {:lock, :not_acquired}
+    assert ConCache.Lock.try_exec(lock, key, fn() -> 2 end) == {:lock, :not_acquired}
     :timer.sleep(100)
-    assert ConCache.Lock.try_exec(lock, :a, fn() -> 3 end) == 3
+    assert ConCache.Lock.try_exec(lock, key, fn() -> 3 end) == 3
   end
 
   test "double lock" do
