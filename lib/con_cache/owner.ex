@@ -115,7 +115,11 @@ defmodule ConCache.Owner do
 
   defp run_expiry(state) do
     {expired, expiry} = Expiry.next_step(state.expiry)
-    Enum.each(expired, &ConCache.delete(self, &1))
+
+    owner = self
+    for item <- expired do
+      Task.start_link(fn -> ConCache.delete(owner, item) end)
+    end
 
     queue_expiry(state.ttl_check)
     %__MODULE__{state | expiry: expiry}
@@ -139,7 +143,9 @@ defmodule ConCache.Owner do
 
   if Mix.env == :test do
     defcall expire, state: state do
-      set_and_reply(run_expiry(state), :ok)
+      state = run_expiry(state)
+      :timer.sleep(10) # sleep a little to allow concurrent cleanups to finish
+      set_and_reply(state, :ok)
     end
   end
 end
