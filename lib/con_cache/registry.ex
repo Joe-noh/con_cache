@@ -15,8 +15,7 @@ defmodule ConCache.Registry do
   end
 
   def get(pid) do
-    [{^pid, cache}] = :ets.lookup(:con_cache_registry, pid)
-    cache
+    :ets.lookup_element(:con_cache_registry, pid, 2)
   end
 
   defhandleinfo {:DOWN, _, :process, pid, _} do
