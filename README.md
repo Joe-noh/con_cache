@@ -280,14 +280,13 @@ When ttl is configured, the owner process works in discrete steps using `:erlang
 
 When an item ttl is set, the owner process receives a message and stores it in its internal structure without doing anything else. Therefore, repeated touching of items is not very expensive.
 
-In the next discrete step, the owner process first applies the pending ttl set requests to its internal state. Then it checks which items must expire at this step, purges them, and calls `:erlang.send_after` to trigger the next step.
+In the next discrete step, the owner process first applies the pending ttl set requests to its internal state. Then it checks which items must expire at this step, purges them, and calls `Process.send_after` to trigger the next step.
 
 This approach allows the owner process to do fairly small amount of work in each discrete step.
 
 ### Consqeuences
 
-Due to the locking and ttl algorithms just described, some additional processing will occur in the owner processes. The work is fairly optimized, but I didn't invest too much time in it.
-For example, lock processes currently use pure functional structures such as `HashDict` and `:gb_trees`. This could probably be replaced with internal ETS table to make it work faster, but I didn't try it.
+Due to the locking and ttl algorithm just described, some additional processing will occur in the owner process. The algorithm is designed under the assumption that there much more reads than writes. If you have frequent writes or renew ttl on reads, the mailbox of the expiry process might build up.
 
 Due to locking and ttl inner workings, multiple copies of each key exist in memory. Therefore, I recommend avoiding complex keys.
 

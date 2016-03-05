@@ -20,22 +20,66 @@ defmodule ConCache do
       ConCache.put(:my_cache, :foo, 1)
       ConCache.get(:my_cache, :foo)  # 1
 
-  The following rules apply:
 
-  - Modifications are by isolated per row. Two processes can't modify the same
-    row at the same time. Dirty operations are available through `dirty_` equivalents.
-  - Reads are dirty by default. You can use `isolated/4` to perform isolated custom
-    operations.
-  - Operations are always performed in the caller process. Custom lock implementation
-    is used to ensure synchronism. See `README.md` for more details.
-  - By default, items don't expire. You can change this with `:ttl` and `:ttl_check`
-    options.
-  - Expiry of an item is by default extended only on modifications. This can be changed
-    while starting the cache.
-  - In all store operations, you can use `ConCache.Item` struct instead of naked values,
-    if you need fine-grained control of item's TTL.
+  ## Isolation
 
-  See `start_link/2` for more details.
+  ConCache implements additional isolation of write operations. Whenever you
+  invoke functions such as `put/3`, or `update/3`, an internal lock is acquired.
+  The locking mechanism is powered by the custom sharded implementation. This means
+  that there is some overhead compared to standard ETS operations. The gain is
+  that you can synchronize more elaborate actions, such as read/modify/write
+  operations without the need to pass the data to some synchronizing process.
+
+  If you're certain there's no competition on some operations, you can use dirty
+  equivalents, such as `dirty_put/3` or `dirty_update/3`. Dirty operations don't
+  acquire the lock, so they boil down to standard ETS isolation properties. Dirty
+  operations make sense if:
+
+  - Only one process is modifying the same row at any point in time
+  - Only simple write operations are used (`put/3`, `insert_new/3`, `delete/2`)
+
+  In such situations, locks present a needless overhead so you can resort to dirty
+  operations.
+
+  Reads are always dirty, i.e. they don't rely on the additional custom locking
+  layer. If you need to isolate reads, you can use `isolated/4`. The same function
+  can be used to introduce custom isolation level.
+
+  ## Item expiry
+
+  By default items do not expire. You can change this by providing `:ttl` and
+  `:ttl_check` options to `start_link/2`. When you configure expiry, items will
+  be removed from the cache after some time.
+
+  The `:ttl` option sets the default time-to-live, while `:ttl_check` sets the
+  interval of purging. An item can thus live at most `ttl + ttl_check` milliseconds.
+  To balance CPU and memory usage, it's advised to set `:ttl_check` to be no less
+  than one second.
+
+  It is possible to set per-item TTL. In all update operations, you can provide
+  `ConCache` struct as values. The struct contains two fields: `value` with the
+  actual value which will be stored, and `ttl` where you can specify item's ttl.
+
+  By default, an item TTL is renewed on every modification, while reads to not
+  affect TTL. If you don't want to extend TTL while modifying an item, you can provide
+  `%ConCache.Item{value: some_value, ttl: :no_update}` as the value. If you want
+  to renew TTL on read, you can provide `:touch_on_read` option to `start_link/2`.
+
+  Finally, you can manually renew the item's TTL with `touch/2`.
+
+  Expiry algorithm is not consistent. It is implemented concurrently, to reduce the
+  CPU usage, and works on a "best-effort" basis. It should usually work as expected,
+  but some race conditions might occur. For example, in some rare situations it is
+  possible that you update an item, and it expires in the next moment. This happens
+  because expiry process runs independently from readers/writers. Consequently, you
+  shouldn't expect strong guarantees from the expiry mechanism. It is devised for
+  caches where items must be purged after they're not used for some time.
+
+  The expiry algorithm is not a brute force scan. It works in discrete ticks, so
+  it knows exactly which items must expire at every tick. This reduces the
+  amount of work needed to be done at each step, and it's resilient to time shifts.
+  However, this approach also increases the memory usage, since a copy of each key
+  exists in the expiry process.
   """
 
   alias ConCache.Owner
@@ -266,7 +310,7 @@ defmodule ConCache do
       ConCache.isolated(:my_cache, :my_item_key, fn() -> ... end)
 
       # Process B:
-      ConCache.update(:my_cache, :my_item, fn(old_value) -> ... end)
+      ConCache.update(:my_cache, :my_item_key, fn(old_value) -> ... end)
 
   These two operations are mutually exclusive.
   """
