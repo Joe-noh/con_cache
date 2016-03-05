@@ -6,7 +6,7 @@ defmodule ConCache.Lock.Resource do
     count: 0,
     pending_owners: :queue.new,
     pending_values: %{},
-    lock_instances: HashSet.new
+    lock_instances: MapSet.new
   )
 
   def new, do: %__MODULE__{}
@@ -30,7 +30,7 @@ defmodule ConCache.Lock.Resource do
   ) do
     {
       {:acquired, value},
-      %__MODULE__{resource | count: count + 1, lock_instances: HashSet.put(lock_instances, lock_instance)}
+      %__MODULE__{resource | count: count + 1, lock_instances: MapSet.put(lock_instances, lock_instance)}
     }
   end
 
@@ -43,7 +43,7 @@ defmodule ConCache.Lock.Resource do
     acquire_next(%__MODULE__{resource |
       pending_owners: :queue.in(pid, pending_owners),
       pending_values: Map.put(pending_values, pid, value),
-      lock_instances: HashSet.put(lock_instances, lock_instance)
+      lock_instances: MapSet.put(lock_instances, lock_instance)
     })
   end
 
@@ -73,8 +73,8 @@ defmodule ConCache.Lock.Resource do
 
 
   def dec_lock(%__MODULE__{lock_instances: lock_instances} = resource, lock_instance, pid) do
-    if HashSet.member?(lock_instances, lock_instance) do
-      %{resource | lock_instances: HashSet.delete(lock_instances, lock_instance)}
+    if MapSet.member?(lock_instances, lock_instance) do
+      %{resource | lock_instances: MapSet.delete(lock_instances, lock_instance)}
       |> dec_owner_lock(pid)
       |> release_pending(pid)
       |> acquire_next

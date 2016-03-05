@@ -11,13 +11,13 @@ defmodule ConCache.Lock.Monitors do
         %{
           count: 1,
           monitor: Process.monitor(pid),
-          lock_instances: Enum.into([lock_instance], HashSet.new)
+          lock_instances: Enum.into([lock_instance], MapSet.new)
         }
 
       {:ok, process_info} ->
         %{process_info |
           count: process_info.count + 1,
-          lock_instances: HashSet.put(process_info.lock_instances, lock_instance)
+          lock_instances: MapSet.put(process_info.lock_instances, lock_instance)
         }
     end
 
@@ -29,7 +29,7 @@ defmodule ConCache.Lock.Monitors do
       :error -> monitors
 
       {:ok, %{lock_instances: lock_instances} = process_info} ->
-        if HashSet.member?(lock_instances, lock_instance) do
+        if MapSet.member?(lock_instances, lock_instance) do
           case process_info do
             %{count: 1, monitor: monitor} ->
               Process.demonitor(monitor)
@@ -40,7 +40,7 @@ defmodule ConCache.Lock.Monitors do
                 processes: Map.put(processes, pid,
                   %{process_info |
                     count: count - 1,
-                    lock_instances: HashSet.delete(lock_instances, lock_instance)
+                    lock_instances: MapSet.delete(lock_instances, lock_instance)
                   }
                 )
               }
