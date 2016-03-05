@@ -5,7 +5,7 @@ defmodule ConCache.Lock.Resource do
     owner: nil,
     count: 0,
     pending_owners: :queue.new,
-    pending_values: HashDict.new,
+    pending_values: %{},
     lock_instances: HashSet.new
   )
 
@@ -14,7 +14,7 @@ defmodule ConCache.Lock.Resource do
   def owner(%__MODULE__{owner: owner}), do: owner
 
   def empty?(%__MODULE__{owner: nil, pending_values: pending_values}) do
-    HashDict.size(pending_values) == 0
+    Map.size(pending_values) == 0
   end
   def empty?(_), do: false
 
@@ -42,7 +42,7 @@ defmodule ConCache.Lock.Resource do
   ) do
     acquire_next(%__MODULE__{resource |
       pending_owners: :queue.in(pid, pending_owners),
-      pending_values: HashDict.put(pending_values, pid, value),
+      pending_values: Map.put(pending_values, pid, value),
       lock_instances: HashSet.put(lock_instances, lock_instance)
     })
   end
@@ -55,7 +55,7 @@ defmodule ConCache.Lock.Resource do
       {:empty, _} -> {:not_acquired, resource}
 
       {{:value, pid}, pending_owners} ->
-        {value, pending_values} = HashDict.pop(pending_values, pid)
+        {value, pending_values} = Map.pop(pending_values, pid)
         {{:acquired, value},
           %__MODULE__{resource |
             owner: pid,
@@ -113,10 +113,10 @@ defmodule ConCache.Lock.Resource do
     %__MODULE__{pending_owners: pending_owners, pending_values: pending_values} = resource,
     pid
   ) do
-    if HashDict.has_key?(pending_values, pid) do
+    if Map.has_key?(pending_values, pid) do
       %__MODULE__{resource |
         pending_owners: :queue.filter(&(&1 !== pid), pending_owners),
-        pending_values: HashDict.delete(pending_values, pid)
+        pending_values: Map.delete(pending_values, pid)
       }
     else
       resource
