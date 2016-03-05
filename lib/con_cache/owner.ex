@@ -11,7 +11,7 @@ defmodule ConCache.Owner do
     ttls: nil,
     max_time: nil,
     on_expire: nil,
-    pending_ttl_sets: HashDict.new,
+    pending_ttl_sets: %{},
     monitor_ref: nil
   ]
 
@@ -86,8 +86,8 @@ defmodule ConCache.Owner do
         %__MODULE__{
           ttl_check: ttl_check,
           on_expire: &ConCache.delete(me, &1),
-          pending: :ets.new(:ttl_manager_pending, [:private, :bag]),
-          ttls: :ets.new(:ttl_manager_ttls, [:private, :set]),
+          pending: %{},
+          ttls: %{},
           max_time: (1 <<< (options[:time_size] || 16)) - 1
         }
         |> queue_check
@@ -102,7 +102,7 @@ defmodule ConCache.Owner do
   end
 
   defcast set_ttl(key, ttl), state: %__MODULE__{pending_ttl_sets: pending_ttl_sets} = state do
-    %__MODULE__{state | pending_ttl_sets: Dict.update(pending_ttl_sets, key, ttl, &queue_ttl_set(&1, ttl))}
+    %__MODULE__{state | pending_ttl_sets: Map.update(pending_ttl_sets, key, ttl, &queue_ttl_set(&1, ttl))}
     |> new_state
   end
 
@@ -110,11 +110,12 @@ defmodule ConCache.Owner do
   defp queue_ttl_set(_, new_ttl), do: new_ttl
 
   defp apply_pending_ttls(%__MODULE__{pending_ttl_sets: pending_ttl_sets} = state) do
-    Enum.each(pending_ttl_sets, fn({key, ttl}) ->
-      do_set_ttl(state, key, ttl)
-    end)
+    state =
+      Enum.reduce(pending_ttl_sets, state,
+        fn({key, ttl}, state) -> do_set_ttl(state, key, ttl) end
+      )
 
-    %__MODULE__{state | pending_ttl_sets: HashDict.new}
+    %__MODULE__{state | pending_ttl_sets: %{}}
   end
 
   defp do_set_ttl(state, key, :renew) do
@@ -125,28 +126,32 @@ defmodule ConCache.Owner do
   end
 
   defp do_set_ttl(state, key, ttl) do
-    remove_pending(state, key)
-    store_ttl(state, key, ttl)
+    state
+    |> remove_pending(key)
+    |> store_ttl(key, ttl)
   end
 
   defp item_ttl(%__MODULE__{ttls: ttls}, key) do
-    case :ets.lookup(ttls, key) do
-      [{^key, {_, ttl}}] -> ttl
-      _ -> nil
+    case Map.fetch(ttls, key) do
+      {:ok, {_, ttl}} -> ttl
+      :error -> nil
     end
   end
 
   defp item_expiry_time(%__MODULE__{ttls: ttls}, key) do
-    case :ets.lookup(ttls, key) do
-      [{^key, {item_expiry_time, _}}] -> item_expiry_time
+    case Map.fetch(ttls, key) do
+      {:ok, {item_expiry_time, _}} -> item_expiry_time
       _ -> nil
     end
   end
 
   defp remove_pending(%__MODULE__{pending: pending} = state, key) do
     case item_expiry_time(state, key) do
-      nil -> :ok
-      item_expiry_time -> :ets.delete_object(pending, {item_expiry_time, key})
+      nil -> state
+      item_expiry_time ->
+        %__MODULE__{state |
+          pending: Map.update!(pending, item_expiry_time, fn(keys) -> MapSet.delete(keys, key) end)
+        }
     end
   end
 
@@ -156,8 +161,10 @@ defmodule ConCache.Owner do
     is_integer(ttl) and ttl > 0
   ) do
     expiry_time = expiry_time(state, ttl)
-    :ets.insert(ttls, {key, {expiry_time, ttl}})
-    :ets.insert(pending, {expiry_time, key})
+    %__MODULE__{state |
+      ttls: Map.put(ttls, key, {expiry_time, ttl}),
+      pending: Map.update(pending, expiry_time, MapSet.new([key]), fn(keys) -> MapSet.put(keys, key) end)
+    }
   end
 
   defp expiry_time(%__MODULE__{current_time: current_time, ttl_check: ttl_check}, ttl) do
@@ -194,42 +201,45 @@ defmodule ConCache.Owner do
   defhandleinfo _, do: noreply
 
   defp increase_time(%__MODULE__{current_time: max, max_time: max} = state) do
-    normalize_pending(state)
-    normalize_ttls(state)
-    %__MODULE__{state | current_time: 0}
+    %__MODULE__{(state |> normalize_pending |> normalize_ttls) | current_time: 0}
   end
 
   defp increase_time(%__MODULE__{current_time: current_time} = state) do
     %__MODULE__{state | current_time: current_time + 1}
   end
 
-  defp normalize_pending(%__MODULE__{current_time: current_time, pending: pending}) do
-    all_pending = :ets.tab2list(pending)
-    :ets.delete_all_objects(pending)
-    Enum.each(all_pending, fn({time, value}) ->
-      :ets.insert(pending, {time - current_time - 1, value})
-    end)
+  defp normalize_pending(%__MODULE__{current_time: current_time, pending: pending} = state) do
+    %__MODULE__{state |
+      pending:
+        pending
+        |> Stream.map(fn({expiry_time, keys}) -> {expiry_time - current_time - 1, keys} end)
+        |> Enum.into(%{})
+    }
   end
 
-  defp normalize_ttls(%__MODULE__{current_time: current_time, ttls: ttls}) do
-    all_ttls = :ets.tab2list(ttls)
-    :ets.delete_all_objects(ttls)
-    Enum.each(all_ttls, fn({key, {expiry_time, ttl}}) ->
-      :ets.insert(ttls, {key, {expiry_time - current_time - 1, ttl}})
-    end)
+  defp normalize_ttls(%__MODULE__{current_time: current_time, ttls: ttls} = state) do
+    %__MODULE__{state |
+      ttls:
+        ttls
+        |> Stream.map(fn({key, {expiry_time, ttl}}) -> {key, {expiry_time - current_time - 1, ttl}} end)
+        |> Enum.into(%{})
+    }
   end
 
-  defp purge(%__MODULE__{current_time: current_time, pending: pending, ttls: ttls, on_expire: on_expire} = state) do
-    Enum.each(currently_pending(state), fn(key) ->
-      on_expire.(key)
-      :ets.delete(ttls, key)
-    end)
-    :ets.delete(pending, current_time)
-    state
+  defp purge(%__MODULE__{pending: pending, on_expire: on_expire} = state) do
+    %__MODULE__{state |
+      ttls:
+        Enum.reduce(currently_pending(state), state.ttls,
+          fn(key, ttls_acc) ->
+            on_expire.(key)
+            Map.delete(ttls_acc, key)
+          end
+        ),
+      pending: Map.delete(pending, state.current_time)
+    }
   end
 
   defp currently_pending(%__MODULE__{pending: pending, current_time: current_time}) do
-    :ets.lookup(pending, current_time)
-    |> Enum.map(&elem(&1, 1))
+    Map.get(pending, current_time, MapSet.new)
   end
 end
